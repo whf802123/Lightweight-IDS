@@ -253,7 +253,7 @@ print("\nFormatted Classification Report (percentages):")
 print(df_report)
 
 # ==============================
-# 12. 单独测量纯推理时间 & 内存
+# 12. Inference Time and Memory Usage
 # ==============================
 mem_inf0 = proc.memory_info().rss / (1024**2)
 start_inf = time.time()
