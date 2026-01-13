@@ -1,5 +1,4 @@
 
-
 '''
 import time
 import numpy as np
@@ -28,7 +27,7 @@ os.environ['XLA_FLAGS'] = (
 tf.config.optimizer.set_jit(True)
 
 # ==============================
-# 0. 列出可用设备
+# 0. List available devices
 # ==============================
 gpus = tf.config.list_physical_devices('GPU')
 cpus = tf.config.list_physical_devices('CPU')
@@ -36,7 +35,7 @@ print("Available CPU devices:", cpus)
 print("Available GPU devices:", gpus)
 
 # ==============================
-# 1. 加载 & 预处理数据
+# 1. Load & preprocess data
 # ==============================
 df = pd.read_csv(
     r'C:\\Users\\Administrator\\Desktop\\wustl_iiot_1.csv',
@@ -56,26 +55,26 @@ df.drop(columns=[
 X = df.drop(columns=['Traffic']).apply(pd.to_numeric, errors='coerce')
 y = df['Traffic'].fillna('missing').astype(str)
 
-# 缺失值用中位数填充
+# Impute missing values with median
 imputer = SimpleImputer(strategy='median')
 X_imp = imputer.fit_transform(X)
 
-# 标签编码
+# Label encoding
 le = LabelEncoder()
 y_enc = le.fit_transform(y)
 print("Label Mapping:", dict(zip(le.classes_, le.transform(le.classes_))))
 
-# 划分训练/测试集
+# Train / test split
 X_train, X_test, y_train, y_test = train_test_split(
     X_imp, y_enc, test_size=0.3, stratify=y_enc, random_state=42
 )
 
-# 标准化
+# Standardization
 scaler = StandardScaler()
 X_train = scaler.fit_transform(X_train)
 X_test  = scaler.transform(X_test)
 
-# 重塑为 (batch, seq_len, feat_dim)
+# Reshape to (batch, seq_len, feat_dim)
 seq_len = X_train.shape[1]
 feat_dim = 1
 X_train = X_train.reshape(-1, seq_len, feat_dim)
@@ -83,7 +82,7 @@ X_test  = X_test.reshape(-1, seq_len, feat_dim)
 num_classes = len(le.classes_)
 
 # ==============================
-# 2. 定义 LSH 自注意力和 GCN 层
+# 2. Define LSH self-attention and GCN layers
 # ==============================
 class LSHSelfAttention(layers.Layer):
     def __init__(self, num_hashes, key_dim, **kwargs):
@@ -120,12 +119,12 @@ class GraphConv(layers.Layer):
         return tf.matmul(x, self.w)
 
 # ==============================
-# 3. 构建 Teacher 模型：IoT-FKGD
+# 3. Build Teacher model: IoT-FKGD
 # ==============================
 def build_teacher_iotfkgd():
     inp = layers.Input((seq_len, feat_dim))
 
-    # multi-scale dilated convs
+    # Multi-scale dilated convolutions
     x1 = layers.Conv1D(128, 3, padding='causal', dilation_rate=1, activation='relu')(inp)
     x2 = layers.Conv1D(128, 3, padding='causal', dilation_rate=2, activation='relu')(inp)
     x4 = layers.Conv1D(128, 3, padding='causal', dilation_rate=4, activation='relu')(inp)
@@ -139,7 +138,7 @@ def build_teacher_iotfkgd():
     x = layers.BatchNormalization()(x)
     x = layers.ReLU()(x)
 
-    # global pooling + MLP head
+    # Global pooling + MLP head
     x = layers.GlobalAveragePooling1D()(x)
     x = layers.Dense(2048, activation='relu')(x)
     out = layers.Dense(num_classes, activation='softmax')(x)
@@ -156,7 +155,7 @@ def build_teacher_iotfkgd():
 teacher = build_teacher_iotfkgd()
 
 # ==============================
-# 4. 训练 Teacher
+# 4. Train Teacher
 # ==============================
 t0 = time.time()
 teacher.fit(X_train, y_train, validation_split=0.1, epochs=1, batch_size=256, verbose=1)
@@ -166,7 +165,7 @@ te_loss, te_acc = teacher.evaluate(X_test, y_test, verbose=0)
 print(f"Teacher eval loss: {te_loss:.4f}, acc: {te_acc:.4f}")
 
 # ==============================
-# 5. 预计算 Soft Labels
+# 5. Pre-compute soft labels
 # ==============================
 T = 10.0
 train_logits = teacher.predict(X_train, batch_size=512)
@@ -175,7 +174,7 @@ test_logits  = teacher.predict(X_test, batch_size=512)
 soft_test    = tf.nn.softmax(test_logits / T)
 
 # ==============================
-# 6. 构建 Dataset Pipeline
+# 6. Build Dataset pipeline
 # ==============================
 train_ds = tf.data.Dataset.from_tensor_slices((X_train, y_train, soft_train)) \
     .cache().shuffle(10000).batch(256).prefetch(tf.data.AUTOTUNE)
@@ -183,12 +182,12 @@ val_ds = tf.data.Dataset.from_tensor_slices((X_test, y_test, soft_test)) \
     .batch(256).prefetch(tf.data.AUTOTUNE)
 
 # ==============================
-# 7. 构建 Student 模型：IoT-FKGD 精简版
+# 7. Build Student model: IoT-FKGD (lightweight)
 # ==============================
 def build_student_iotfkgd():
     inp = layers.Input((seq_len, feat_dim))
 
-    # multi-scale dilated convs
+    # Multi-scale dilated convolutions
     x1 = layers.Conv1D(64, 3, padding='causal', dilation_rate=1, activation='relu')(inp)
     x2 = layers.Conv1D(64, 3, padding='causal', dilation_rate=2, activation='relu')(inp)
     x4 = layers.Conv1D(64, 3, padding='causal', dilation_rate=4, activation='relu')(inp)
@@ -202,7 +201,7 @@ def build_student_iotfkgd():
     x = layers.BatchNormalization()(x)
     x = layers.ReLU()(x)
 
-    # global pooling + MLP head
+    # Global pooling + MLP head
     x = layers.GlobalAveragePooling1D()(x)
     x = layers.Dense(512, activation='relu')(x)
     out = layers.Dense(num_classes, activation='softmax')(x)
@@ -219,7 +218,7 @@ def build_student_iotfkgd():
 student = build_student_iotfkgd()
 
 # ==============================
-# 8. 独立训练 Student & 资源统计
+# 8. Standalone Student training & resource profiling
 # ==============================
 print("\n=== Standalone Student Training ===")
 wall_before = time.time()
@@ -240,7 +239,7 @@ st_loss, st_acc = student.evaluate(X_test, y_test, verbose=0)
 print(f"Standalone student eval loss: {st_loss:.4f}, acc: {st_acc:.4f}")
 
 # ==============================
-# 9. 定义 Distiller（修复 compile 签名）
+# 9. Define Distiller (fixed compile signature)
 # ==============================
 class Distiller(models.Model):
     def __init__(self, student, temp=10.0, alpha=0.5):
@@ -281,7 +280,7 @@ class Distiller(models.Model):
         return {m.name: m.result() for m in self.metrics}
 
 # ==============================
-# 10. 蒸馏训练
+# 10. Distillation training
 # ==============================
 with tf.device('/GPU:0' if gpus else '/CPU:0'):
     distiller = Distiller(student, temp=T, alpha=0.5)
@@ -295,7 +294,7 @@ with tf.device('/GPU:0' if gpus else '/CPU:0'):
     print(f"\nDistillation training time: {time.time() - d0:.2f}s")
 
 # ==============================
-# 11. 蒸馏后评估 & 资源统计
+# 11. Post-distillation evaluation & resource profiling
 # ==============================
 print("\n=== Post-Distillation Student Evaluation ===")
 wall_before = time.time()
@@ -314,7 +313,7 @@ print(f"Post-distillation student eval RAM Δ:       {(ram_after - ram_before)/1
 print(f"Post-distillation student loss: {st_loss_kd:.4f}, acc: {st_acc_kd:.4f}")
 
 # ==============================
-# 12. 输出分类报告 & 可视化
+# 12. Output classification report & visualization
 # ==============================
 y_pred = student.predict(X_test, batch_size=512)
 y_labels = np.argmax(y_pred, axis=1)
@@ -349,7 +348,7 @@ plt.xlabel("False Positive Rate"); plt.ylabel("True Positive Rate")
 plt.legend(loc="lower right"); plt.tight_layout(); plt.show()
 
 # ==============================
-# 13. 纯推理时间 & 内存
+# 13. Pure inference time & memory
 # ==============================
 mem_inf0 = proc.memory_info().rss / (1024**2)
 start_inf = time.time()
@@ -362,8 +361,8 @@ print(f"Inference time on test set: {inf_time:.4f}s for {n_samples} samples, avg
 print(f"Inference RAM Δ: {mem_inf1 - mem_inf0:.4f} MB")
 '''
 
+
 import os
-# 关闭 oneDNN 导致的浮点差异提示（可选）
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 import time
