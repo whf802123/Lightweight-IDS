@@ -20,7 +20,6 @@ test_csv  = r'C:\Users\Administrator\Desktop\X-IIoTID_10pct_test.csv'
 # monitoring
 proc = psutil.Process(os.getpid())
 def get_mem_mb():
-    """返回当前进程常驻内存（RSS），单位 MB"""
     return proc.memory_info().rss / 1024**2
 random_state = 42
 
@@ -298,22 +297,15 @@ print(f"Macro Precision: {p:.4f}, Recall: {r:.4f}, F1: {f1:.4f}")
 # ==============================
 # 12. STUDENT INFERENCE WITH RAM & TIME MEASUREMENT
 # ==============================
-# 记录推理前内存
 mem_inf0 = proc.memory_info().rss / (1024**2)
 
-# 记录推理开始时间
 start_inf = time.time()
-# 批量推理
 y_prob_inf = student.predict(X_test_seq, batch_size=256, verbose=0)
-# 计算推理耗时
 inf_time = time.time() - start_inf
 
-# 记录推理后内存
 mem_inf1 = proc.memory_info().rss / (1024**2)
 
-# 样本数量
 n_samples = X_test_seq.shape[0]
-# 打印结果
 print(f"Inference time on test set: {inf_time:.4f}s for {n_samples} samples, "
       f"avg {inf_time/n_samples*1000:.4f} ms/sample")
 print(f"Inference RAM Δ: {mem_inf1 - mem_inf0:.4f} MB")
