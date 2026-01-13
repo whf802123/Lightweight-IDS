@@ -22,20 +22,13 @@ os.environ['XLA_FLAGS'] = (
 )
 tf.config.optimizer.set_jit(True)
 
-# ==============================
-# 0. 列出可用设备
-# ==============================
 gpus = tf.config.list_physical_devices('GPU')
 cpus = tf.config.list_physical_devices('CPU')
 print("Available CPU devices:", cpus)
 print("Available GPU devices:", gpus)
 
-# 用于监控 CPU/RAM
 proc = psutil.Process()
 
-# ==============================
-# 1. 加载 & 预处理数据
-# ==============================
 df = pd.read_csv(
     r'C:\Users\Administrator\Desktop\wustl_iiot_1.csv',
     dtype=str, na_values=['?', '-'], keep_default_na=True, low_memory=False
@@ -49,13 +42,13 @@ df.drop(columns=[
 X = df.drop(columns=['Traffic']).apply(pd.to_numeric, errors='coerce')
 y = df['Traffic'].fillna('missing').astype(str)
 
-# 缺失值填充 & 编码
+# Preprocessing
 X_imp = SimpleImputer(strategy='median').fit_transform(X)
 le = LabelEncoder()
 y_enc = le.fit_transform(y)
 print("Label Mapping:", dict(zip(le.classes_, le.transform(le.classes_))))
 
-# 划分 & 标准化
+# Split and Normalization
 X_train, X_test, y_train, y_test = train_test_split(
     X_imp, y_enc, test_size=0.3, stratify=y_enc, random_state=42
 )
@@ -63,7 +56,7 @@ scaler = StandardScaler()
 X_train = scaler.fit_transform(X_train)
 X_test  = scaler.transform(X_test)
 
-# 重塑
+# Reshape
 seq_len = X_train.shape[1]
 feat_dim = 1
 X_train = X_train.reshape(-1, seq_len, feat_dim)
@@ -71,7 +64,7 @@ X_test  = X_test.reshape(-1, seq_len, feat_dim)
 num_classes = len(le.classes_)
 
 # ==============================
-# 2. 构建 Teacher 模型
+# 2. Teacher Model
 # ==============================
 def build_teacher():
     inp = layers.Input(shape=(seq_len, feat_dim))
@@ -101,7 +94,7 @@ def build_teacher():
 teacher = build_teacher()
 
 # ==============================
-# 3. 训练 Teacher
+# 3. Train Teacher
 # ==============================
 t0 = time.time()
 teacher.fit(X_train, y_train, validation_split=0.1, epochs=1, batch_size=256, verbose=1)
@@ -110,7 +103,7 @@ te_loss, te_acc = teacher.evaluate(X_test, y_test, verbose=0)
 print(f"Teacher eval loss: {te_loss:.4f}, acc: {te_acc:.4f}")
 
 # ==============================
-# 4. 预计算 Soft Labels
+# 4. Soft Labels
 # ==============================
 T = 10.0
 train_logits = teacher.predict(X_train, batch_size=512)
@@ -118,14 +111,11 @@ soft_train = tf.nn.softmax(train_logits / T)
 test_logits  = teacher.predict(X_test, batch_size=512)
 soft_test    = tf.nn.softmax(test_logits / T)
 
-# ==============================
-# 4.5 释放教师模型 & 清理 Session
-# ==============================
 del teacher
 tf.keras.backend.clear_session()
 
 # ==============================
-# 5. 构建 Dataset Pipeline
+# 5. Dataset Pipeline
 # ==============================
 train_ds = tf.data.Dataset.from_tensor_slices((X_train, y_train, soft_train)) \
     .shuffle(10000).batch(256).cache().prefetch(tf.data.AUTOTUNE)
@@ -133,7 +123,7 @@ val_ds = tf.data.Dataset.from_tensor_slices((X_test, y_test, soft_test)) \
     .batch(256).prefetch(tf.data.AUTOTUNE)
 
 # ==============================
-# 6. 构建 Student 模型
+# 6. Student Model
 # ==============================
 def build_student():
     inp = layers.Input(shape=(seq_len, feat_dim))
@@ -152,7 +142,7 @@ def build_student():
 student = build_student()
 
 # ==============================
-# 7. 独立训练 Student
+# 7. Train Student
 # ==============================
 print("\n=== Standalone Student Training ===")
 wall_before = time.time()
@@ -173,7 +163,7 @@ st_loss, st_acc = student.evaluate(X_test, y_test, verbose=0)
 print(f"Standalone eval loss: {st_loss:.4f}, acc: {st_acc:.4f}")
 
 # ==============================
-# 8. 定义 Distiller
+# 8. Distiller
 # ==============================
 class Distiller(models.Model):
     def __init__(self, student, temp=10.0, alpha=0.5):
@@ -214,7 +204,7 @@ class Distiller(models.Model):
         return {m.name: m.result() for m in self.metrics}
 
 # ==============================
-# 9. 蒸馏训练
+# 9. Distillation
 # ==============================
 distiller = Distiller(student, temp=T, alpha=0.5)
 distiller.compile(
@@ -227,7 +217,7 @@ distiller.fit(train_ds, validation_data=val_ds, epochs=1, verbose=1)
 print(f"Distillation training time: {time.time() - d0:.2f}s")
 
 # ==============================
-# 10. 蒙馏后评估
+# 10. Evaluation
 # ==============================
 print("\n=== Post-Distillation Evaluation ===")
 wall_before = time.time()
@@ -246,12 +236,11 @@ print(f"RAM Δ:     {(ram_after - ram_before)/1024**2:.2f} MB")
 print(f"Eval loss: {st_loss_kd:.4f}, acc: {st_acc_kd:.4f}")
 
 # ==============================
-# 11. 输出报告 & 可视化
+# 11. Visualization
 # ==============================
 y_pred = student.predict(X_test, batch_size=512)
 y_labels = np.argmax(y_pred, axis=1)
 
-# 报告
 report_dict = classification_report(
     y_test, y_labels, target_names=le.classes_, output_dict=True
 )
@@ -262,7 +251,7 @@ df_report['support'] = df_report['support'].astype(int)
 print("\nFormatted Classification Report (percentages):")
 print(df_report)
 
-# 混淆矩阵
+# Confusion Matrix
 cm = confusion_matrix(y_test, y_labels)
 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=le.classes_)
 fig, ax = plt.subplots(figsize=(8, 8))
@@ -270,7 +259,7 @@ disp.plot(ax=ax, cmap=plt.cm.Blues, colorbar=False)
 plt.tight_layout()
 plt.show()
 
-# ROC 曲线
+# ROC Curve
 y_test_bin = label_binarize(y_test, classes=range(num_classes))
 fpr, tpr, roc_auc = {}, {}, {}
 for i in range(num_classes):
