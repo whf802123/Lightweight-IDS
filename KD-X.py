@@ -13,12 +13,12 @@ import matplotlib.pyplot as plt
 from tensorflow.keras import layers, models, metrics
 
 # ==============================
-# 监控进程
+# Process monitor
 # ==============================
 proc = psutil.Process(os.getpid())
 
 # ==============================
-# 1. 读入 CSV，把 '?' 和 '-' 当成 NaN
+# 1. Load CSV and treat '?' and '-' as NaN
 # ==============================
 df = pd.read_csv(
     r'C:\Users\Administrator\Desktop\X-IIoTID dataset.csv',
@@ -27,7 +27,7 @@ df = pd.read_csv(
 df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
 # ==============================
-# 2. 布尔列 'TRUE'/'FALSE' → 1/0
+# 2. Convert boolean columns 'TRUE'/'FALSE' to 1/0
 # ==============================
 bool_cols = [
     'is_syn_only','Is_SYN_ACK','is_pure_ack','is_with_payload',
@@ -38,7 +38,7 @@ for c in bool_cols:
         df[c] = df[c].map({'TRUE':1, 'FALSE':0})
 
 # ==============================
-# 3. 丢弃不需要的列
+# 3. Drop unused columns
 # ==============================
 drop_cols = ['Date','Timestamp','SrcIP','DstIP','class1','class3'
 
@@ -50,18 +50,18 @@ drop_cols = ['Date','Timestamp','SrcIP','DstIP','class1','class3'
 df.drop(columns=[c for c in drop_cols if c in df.columns], errors='ignore', inplace=True)
 
 # ==============================
-# 4. 准备特征和标签
+# 4. Prepare features and labels
 # ==============================
 label_col    = 'class2'
 cat_cols     = ['Protocol','Service','Conn_state']
 feature_cols = [c for c in df.columns if c not in [label_col] + cat_cols]
 
-# 数值型 → float → 中位数插补
+# Numerical features → float → median imputation
 for c in feature_cols:
     df[c] = pd.to_numeric(df[c], errors='coerce')
 X_num = SimpleImputer(strategy='median').fit_transform(df[feature_cols])
 
-# 类别型 → 填 'missing' + One-Hot
+# Categorical features → fill 'missing' + one-hot encoding
 df[cat_cols] = df[cat_cols].fillna('missing')
 X_cat = OneHotEncoder(sparse_output=False, handle_unknown='ignore') \
     .fit_transform(df[cat_cols])
@@ -69,10 +69,10 @@ X_cat = OneHotEncoder(sparse_output=False, handle_unknown='ignore') \
 X = np.hstack([X_num, X_cat])
 le = LabelEncoder()
 y = le.fit_transform(df[label_col].fillna('missing'))
-print("class2 映射：", dict(zip(le.classes_, le.transform(le.classes_))))
+print("class2 mapping:", dict(zip(le.classes_, le.transform(le.classes_))))
 
 # ==============================
-# 5. 划分训练/测试 & 标准化
+# 5. Train / test split and standardization
 # ==============================
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.3, stratify=y, random_state=42
@@ -81,7 +81,7 @@ scaler   = StandardScaler()
 X_train  = scaler.fit_transform(X_train)
 X_test   = scaler.transform(X_test)
 
-# —— 把特征当作时间序列长度 seq_len，feat_dim=1 ——
+# —— Treat features as time steps: seq_len = num_features, feat_dim = 1 ——
 seq_len   = X_train.shape[1]
 feat_dim  = 1
 X_train_seq = X_train.reshape(-1, seq_len, feat_dim)
@@ -89,7 +89,7 @@ X_test_seq  = X_test.reshape(-1, seq_len, feat_dim)
 num_classes = len(le.classes_)
 
 # ==============================
-# 6. 定义教师模型
+# 6. Build teacher model
 # ==============================
 def build_teacher():
     inp = layers.Input((seq_len, feat_dim))
@@ -132,7 +132,7 @@ te_loss, te_acc = teacher.evaluate(X_test_seq, y_test, verbose=0)
 print(f"Teacher eval loss: {te_loss:.4f}, acc: {te_acc:.4f}")
 
 # ==============================
-# 7. 生成软标签
+# 7. Generate soft labels
 # ==============================
 T = 10.0
 train_logits = teacher.predict(X_train_seq, batch_size=512)
@@ -141,7 +141,7 @@ test_logits  = teacher.predict(X_test_seq, batch_size=512)
 soft_test    = tf.nn.softmax(test_logits / T, axis=1)
 
 # ==============================
-# 8. 构建蒸馏数据管道
+# 8. Build distillation data pipeline
 # ==============================
 train_ds = tf.data.Dataset.from_tensor_slices(
     (X_train_seq, y_train, soft_train)
@@ -154,7 +154,7 @@ val_ds = tf.data.Dataset.from_tensor_slices(
  .batch(256).prefetch(tf.data.AUTOTUNE)
 
 # ==============================
-# 9. 定义 Distiller
+# 9. Define Distiller
 # ==============================
 class Distiller(models.Model):
     def __init__(self, student, teacher):
@@ -219,7 +219,7 @@ class Distiller(models.Model):
         }
 
 # ==============================
-# 10. 构建学生模型 & 蒸馏训练
+# 10. Build student model & perform distillation training
 # ==============================
 def build_student():
     inp = layers.Input(shape=(seq_len, feat_dim))
@@ -249,39 +249,39 @@ distiller.compile(
     temperature=T
 )
 
-# 蒸馏训练内存增量
+# Memory increase during distillation training
 mem_s0 = proc.memory_info().rss / (1024**2)
 t1     = time.time()
 distiller.fit(train_ds, validation_data=val_ds, epochs=1, verbose=1)
 print(f"Student distill time: {time.time()-t1:.2f}s, RAM Δ: {proc.memory_info().rss/1024**2 - mem_s0:.2f} MB")
 
 # ==============================
-# 11. 最终评估学生模型 + 计算推理时间和内存
+# 11. Final evaluation of student model + inference time and memory
 # ==============================
 
-# 1) 记录推理前内存
+# 1) Record memory before inference
 mem_inf0 = proc.memory_info().rss / (1024**2)
 
-# 2) 计时并执行推理
+# 2) Time and perform inference
 start_inf = time.time()
 y_prob_inf = student.predict(X_test_seq, batch_size=256, verbose=0)
 inf_time = time.time() - start_inf
 
-# 3) 记录推理后内存
+# 3) Record memory after inference
 mem_inf1 = proc.memory_info().rss / (1024**2)
 
-# 4) 计算样本数并打印结果
+# 4) Compute number of samples and print results
 n_samples = X_test_seq.shape[0]
 print(f"Inference time on test set: {inf_time:.4f}s for {n_samples} samples, "
       f"avg {inf_time/n_samples*1000:.4f} ms/sample")
 print(f"Inference RAM Δ: {mem_inf1 - mem_inf0:.4f} MB")
 
-# 5) 后续常规评估
+# 5) Standard evaluation
 y_pred = np.argmax(y_prob_inf, axis=1)
 print("\nClassification Report (Student):")
 print(classification_report(y_test, y_pred, target_names=le.classes_, digits=4))
 
-# 混淆矩阵可视化
+# Confusion matrix visualization
 cm = confusion_matrix(y_test, y_pred)
 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=le.classes_)
 fig, ax = plt.subplots(figsize=(8, 8))
@@ -290,7 +290,7 @@ plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
 plt.tight_layout()
 plt.show()
 
-# ROC 曲线及 AUC
+# ROC curves and AUC
 y_test_bin = label_binarize(y_test, classes=range(num_classes))
 fpr, tpr, roc_auc = {}, {}, {}
 for i in range(num_classes):
