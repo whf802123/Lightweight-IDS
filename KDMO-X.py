@@ -25,20 +25,15 @@ from sklearn.metrics import (
     auc
 )
 
-# =========================================================
-# 0. TensorFlow/XLA setup for operator fusion
-# =========================================================
+
 tf.keras.backend.clear_session()
-tf.config.optimizer.set_jit(True)   # Enable XLA JIT for operator fusion
-# Optional: for reproducibility
+tf.config.optimizer.set_jit(True)   
+
 tf.random.set_seed(42)
 np.random.seed(42)
 
 proc = psutil.Process(os.getpid())
 
-# =========================================================
-# 1. Load data
-# =========================================================
 df = pd.read_csv(
     r'C:\Users\whf80\Desktop\Lightweight\Dataset\x-IIoTID\X-IIoTID dataset.csv',
     dtype=str,
@@ -48,9 +43,6 @@ df = pd.read_csv(
 )
 df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
-# =========================================================
-# 2. Boolean mapping
-# =========================================================
 bool_cols = [
     'is_syn_only', 'Is_SYN_ACK', 'is_pure_ack', 'is_with_payload',
     'FIN or RST', 'Bad_checksum', 'is_SYN_with_RST', 'anomaly_alert'
@@ -59,15 +51,10 @@ for c in bool_cols:
     if c in df.columns:
         df[c] = df[c].map({'TRUE': 1, 'FALSE': 0})
 
-# =========================================================
-# 3. Drop unused columns
-# =========================================================
 drop_cols = ['Date', 'Timestamp', 'SrcIP', 'DstIP', 'class1', 'class3']
 df.drop(columns=[c for c in drop_cols if c in df.columns], errors='ignore', inplace=True)
 
-# =========================================================
-# 4. Prepare features and labels
-# =========================================================
+
 label_col = 'class2'
 cat_cols = ['Protocol', 'Service', 'Conn_state']
 feature_cols = [c for c in df.columns if c not in [label_col] + cat_cols]
@@ -86,9 +73,6 @@ le = LabelEncoder()
 y = le.fit_transform(df[label_col].fillna('missing'))
 print("class2 ：", dict(zip(le.classes_, le.transform(le.classes_))))
 
-# =========================================================
-# 5. Split and normalization
-# =========================================================
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.3, stratify=y, random_state=42
 )
@@ -103,9 +87,9 @@ X_train_seq = X_train.reshape(-1, seq_len, feat_dim).astype(np.float32)
 X_test_seq = X_test.reshape(-1, seq_len, feat_dim).astype(np.float32)
 num_classes = len(le.classes_)
 
-# =========================================================
-# 6. Early stopping
-# =========================================================
+
+# Early stopping
+
 es_callback = EarlyStopping(
     monitor='val_loss',
     patience=5,
@@ -114,18 +98,15 @@ es_callback = EarlyStopping(
     verbose=1
 )
 
-# =========================================================
-# 7. Attention map
-# =========================================================
+# Attention map
+
 @tf.function(jit_compile=True)
 def compute_attention_map(x):
     att = tf.reduce_sum(tf.square(x), axis=-1, keepdims=True)
     att = att / (tf.reduce_sum(att, axis=1, keepdims=True) + 1e-8)
     return att
 
-# =========================================================
-# 8. Teacher model + attention extractor
-# =========================================================
+
 def build_teacher_with_attention():
     inp = layers.Input((seq_len, feat_dim), name="teacher_input")
 
@@ -165,9 +146,10 @@ def build_teacher_with_attention():
     )
     return model, att_model
 
-# =========================================================
-# 9. Student model + attention extractor
-# =========================================================
+
+# 9. Student model 
+
+
 def build_student_with_attention():
     inp = layers.Input((seq_len, feat_dim), name="student_input")
 
@@ -188,9 +170,9 @@ def build_student_with_attention():
     )
     return model, att_model
 
-# =========================================================
-# 10. Distiller with Attention Transfer
-# =========================================================
+
+# Distiller with Attention Transfer
+
 class DistillerAT(models.Model):
     def __init__(self, student, teacher, student_att, teacher_att,
                  alpha=0.1, beta=0.1, temperature=10.0):
@@ -285,9 +267,6 @@ class DistillerAT(models.Model):
 
         return {m.name: m.result() for m in self.metrics}
 
-# =========================================================
-# 11. Build and train teacher
-# =========================================================
 teacher, teacher_att = build_teacher_with_attention()
 
 mem_t0 = proc.memory_info().rss / (1024 ** 2)
@@ -312,9 +291,7 @@ print(f"Teacher RAM Δ: {mem_t1 - mem_t0:.2f} MB")
 teacher_eval_loss, teacher_eval_acc = teacher.evaluate(X_test_seq, y_test, verbose=0)
 print(f"Teacher eval loss: {teacher_eval_loss:.4f}, acc: {teacher_eval_acc:.4f}")
 
-# =========================================================
-# 12. Generate soft labels
-# =========================================================
+
 T = 10.0
 
 train_logits = teacher.predict(X_train_seq, batch_size=512, verbose=0)
@@ -323,9 +300,6 @@ soft_train = tf.nn.softmax(train_logits / T, axis=1)
 test_logits = teacher.predict(X_test_seq, batch_size=512, verbose=0)
 soft_test = tf.nn.softmax(test_logits / T, axis=1)
 
-# =========================================================
-# 13. Build tf.data pipeline
-# =========================================================
 train_ds = tf.data.Dataset.from_tensor_slices((X_train_seq, y_train, soft_train))
 train_ds = (
     train_ds
@@ -343,9 +317,6 @@ val_ds = (
     .prefetch(tf.data.AUTOTUNE)
 )
 
-# =========================================================
-# 14. Build and train student with AT distillation
-# =========================================================
 student, student_att = build_student_with_attention()
 
 mem_model = proc.memory_info().rss / (1024 ** 2)
@@ -374,7 +345,7 @@ t1 = time.time()
 distiller.fit(
     train_ds,
     validation_data=val_ds,
-    epochs=50,             # EarlyStopping can now work here too
+    epochs=50,        
     callbacks=[es_callback],
     verbose=1
 )
@@ -385,9 +356,8 @@ mem_s1 = proc.memory_info().rss / (1024 ** 2)
 print(f"Distillation training time: {student_time:.2f} s")
 print(f"Distillation RAM Δ: {mem_s1 - mem_s0:.2f} MB")
 
-# =========================================================
-# 15. Final evaluation
-# =========================================================
+# Evaluation
+
 mem_inf0 = proc.memory_info().rss / (1024 ** 2)
 
 start_inf = time.time()
@@ -406,9 +376,8 @@ y_pred = np.argmax(y_prob_inf, axis=1)
 print("\nClassification Report (Student):")
 print(classification_report(y_test, y_pred, target_names=le.classes_, digits=4))
 
-# =========================================================
-# 16. Confusion Matrix
-# =========================================================
+# Confusion Matrix
+
 cm = confusion_matrix(y_test, y_pred)
 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=le.classes_)
 
@@ -418,9 +387,9 @@ plt.xticks(rotation=45, ha="right")
 plt.tight_layout()
 plt.show()
 
-# =========================================================
-# 17. ROC & AUC
-# =========================================================
+
+# ROC 
+
 y_test_bin = label_binarize(y_test, classes=range(num_classes))
 fpr, tpr, roc_auc = {}, {}, {}
 
