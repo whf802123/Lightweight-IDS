@@ -28,9 +28,7 @@ for c in bool_cols:
     if c in df.columns:
         df[c] = df[c].map({'TRUE':1, 'FALSE':0})
 
-# ==============================
-# 3. Prepeocessing
-# ==============================
+# Prepeocessing
 drop_cols = ['Date','Timestamp','SrcIP','DstIP','class1','class3'
 
             , 'Std_nice_time', 'DstPkts', 'Scr_ip_bytes', 'TotalPkts, Std_ldavg_1', 'Std_kbmemused', 'SrcPkts', 'Std_wtps', 'Avg_iowait_time', 'Std_iowait_time', 'missed_bytes', 'Avg_num_Proc/s', 'Std_num_proc/s'
@@ -58,9 +56,7 @@ le = LabelEncoder()
 y = le.fit_transform(df[label_col].fillna('missing'))
 print("class2 映射：", dict(zip(le.classes_, le.transform(le.classes_))))
 
-# ==============================
-# 5. Split and Normalization
-# ==============================
+# Split and Normalization
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.3, stratify=y, random_state=42
 )
@@ -74,9 +70,7 @@ X_train_seq = X_train.reshape(-1, seq_len, feat_dim)
 X_test_seq  = X_test.reshape(-1, seq_len, feat_dim)
 num_classes = len(le.classes_)
 
-# ==============================
-# 6. Teacher Model
-# ==============================
+# Teacher Model
 def build_teacher():
     inp = layers.Input((seq_len, feat_dim))
     x = layers.Conv1D(64, 3, padding='same', activation='relu')(inp)
@@ -117,18 +111,14 @@ print(f"Teacher train time: {time.time()-t0:.2f}s, RAM Δ: {proc.memory_info().r
 te_loss, te_acc = teacher.evaluate(X_test_seq, y_test, verbose=0)
 print(f"Teacher eval loss: {te_loss:.4f}, acc: {te_acc:.4f}")
 
-# ==============================
-# 7. Soft Label
-# ==============================
+# Soft Label
 T = 10.0
 train_logits = teacher.predict(X_train_seq, batch_size=512)
 soft_train   = tf.nn.softmax(train_logits / T, axis=1)
 test_logits  = teacher.predict(X_test_seq, batch_size=512)
 soft_test    = tf.nn.softmax(test_logits / T, axis=1)
 
-# ==============================
-# 8. Distillation Pipeline
-# ==============================
+# Distillation Pipeline
 train_ds = tf.data.Dataset.from_tensor_slices(
     (X_train_seq, y_train, soft_train)
 ).map(lambda x, y, s: (x, (y, s))) \
@@ -139,9 +129,7 @@ val_ds = tf.data.Dataset.from_tensor_slices(
 ).map(lambda x, y, s: (x, (y, s))) \
  .batch(256).prefetch(tf.data.AUTOTUNE)
 
-# ==============================
-# 9. Distiller
-# ==============================
+# Distiller
 class Distiller(models.Model):
     def __init__(self, student, teacher):
         super().__init__()
@@ -204,9 +192,7 @@ class Distiller(models.Model):
             "accuracy":     self.accuracy_tracker.result(),
         }
 
-# ==============================
-# 10. Student Model
-# ==============================
+# Student Model
 def build_student():
     inp = layers.Input(shape=(seq_len, feat_dim))
     x = layers.GRU(64, implementation=2)(inp)
@@ -224,7 +210,6 @@ def build_student():
 # Build student and measure its loaded memory
 student = build_student()
 
-
 mem_before = proc.memory_info().rss / (1024**2)
 t0 = time.time()
 
@@ -239,8 +224,6 @@ history = student.fit(
 train_time = time.time() - t0
 mem_after = proc.memory_info().rss / (1024**2)
 print(f"Student-only train time: {train_time:.2f}s, RAM Δ: {mem_after - mem_before:.2f} MB")
-
-
 
 mem_model = proc.memory_info().rss / (1024**2)
 print(f"Student model loaded RAM: {mem_model:.2f} MB")
@@ -259,10 +242,7 @@ t1     = time.time()
 distiller.fit(train_ds, validation_data=val_ds, epochs=5, verbose=1)
 print(f"Student distill time: {time.time()-t1:.2f}s, RAM Δ: {proc.memory_info().rss/1024**2 - mem_s0:.2f} MB")
 
-# ==============================
-# 11.Evaluation
-# ==============================
-
+# Evaluation
 mem_inf0 = proc.memory_info().rss / (1024**2)
 
 start_inf = time.time()
@@ -303,6 +283,3 @@ plt.plot([0, 1], [0, 1], 'k--', lw=1)
 plt.xlim([0.0, 1.0]); plt.ylim([0.0, 1.05])
 plt.xlabel("False Positive Rate"); plt.ylabel("True Positive Rate")
 plt.legend(loc="lower right"); plt.tight_layout(); plt.show()
-
-
-
