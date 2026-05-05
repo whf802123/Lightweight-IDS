@@ -211,8 +211,7 @@ val_ds = (
     .prefetch(tf.data.AUTOTUNE)
 )
 
-# 8. student model
-
+# Student model
 def build_base_student():
     inp = layers.Input(shape=(seq_len, feat_dim), name="student_input")
 
@@ -244,7 +243,7 @@ pruning_params = {
 
 student = sparsity.prune_low_magnitude(base_student, **pruning_params)
 
-# compile only for graph building / predict friendliness
+# Compile only for graph building / predict friendliness
 student.compile(
     optimizer='adam',
     loss=None,
@@ -255,7 +254,6 @@ print("\nPrunable student model built.")
 
 
 #  Attention Transfer 
-
 class DistillerAT(models.Model):
     def __init__(self, student, teacher, teacher_att, alpha=0.5, beta=0.1, temp=10.0):
         super().__init__()
@@ -372,8 +370,7 @@ prune_callbacks = [
 ]
 
 
-# 10. Distillation 
-
+# Distillation 
 print("\n=== Distillation + AT + Pruning Training ===")
 mem_s0 = proc.memory_info().rss / (1024 ** 2)
 d0 = time.time()
@@ -397,7 +394,6 @@ print("\nPruning wrappers stripped for final inference model.")
 
 
 # Evaluation
-
 print("\n=== Final Evaluation ===")
 wall_before = time.time()
 cpu_before = proc.cpu_times().user + proc.cpu_times().system
@@ -419,7 +415,6 @@ print(classification_report(y_test, y_labels, target_names=le.classes_, digits=4
 
 
 # Confusion Matrix
-
 cm = confusion_matrix(y_test, y_labels)
 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=le.classes_)
 
@@ -429,8 +424,7 @@ plt.tight_layout()
 plt.show()
 
 
-#  ROC Curves
-
+#  ROC Curve
 y_test_bin = label_binarize(y_test, classes=range(num_classes))
 fpr, tpr, roc_auc = {}, {}, {}
 
@@ -448,5 +442,3 @@ plt.ylabel("True Positive Rate")
 plt.legend(loc="lower right")
 plt.tight_layout()
 plt.show()
-
-
