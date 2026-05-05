@@ -12,23 +12,15 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 from tensorflow.keras import layers, models, metrics, losses, optimizers
 
-# ==============================
-# Process monitor
-# ==============================
 proc = psutil.Process(os.getpid())
 
-# ==============================
-# 1. Load CSV and treat '?' and '-' as NaN
-# ==============================
+# Load dataset
 df = pd.read_csv(
     r'C:\Users\Administrator\Desktop\X-IIoTID dataset.csv',
     dtype=str, na_values=['?','-'], keep_default_na=True, low_memory=False
 )
 df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
-# ==============================
-# 2. Convert boolean columns 'TRUE'/'FALSE' to 1/0
-# ==============================
 bool_cols = [
     'is_syn_only','Is_SYN_ACK','is_pure_ack','is_with_payload',
     'FIN or RST','Bad_checksum','is_SYN_with_RST','anomaly_alert'
@@ -37,9 +29,7 @@ for c in bool_cols:
     if c in df.columns:
         df[c] = df[c].map({'TRUE':1, 'FALSE':0})
 
-# ==============================
-# 3. Drop unused columns
-# ==============================
+# Drop unused columns
 drop_cols = ['Date','Timestamp','SrcIP','DstIP','class1','class3'
 
           # , 'Std_nice_time', 'DstPkts', 'Scr_ip_bytes', 'TotalPkts, Std_ldavg_1', 'Std_kbmemused', 'SrcPkts', 'Std_wtps', 'Avg_iowait_time', 'Std_iowait_time', 'missed_bytes', 'Avg_num_Proc/s', 'Std_num_proc/s'
@@ -49,9 +39,7 @@ drop_cols = ['Date','Timestamp','SrcIP','DstIP','class1','class3'
 ]
 df.drop(columns=[c for c in drop_cols if c in df.columns], errors='ignore', inplace=True)
 
-# ==============================
-# 4. Prepare features and labels
-# ==============================
+# Prepare features and labels
 label_col    = 'class2'
 cat_cols     = ['Protocol','Service','Conn_state']
 feature_cols = [c for c in df.columns if c not in [label_col] + cat_cols]
@@ -71,9 +59,7 @@ le = LabelEncoder()
 y = le.fit_transform(df[label_col].fillna('missing'))
 print("class2 mapping:", dict(zip(le.classes_, le.transform(le.classes_))))
 
-# ==============================
-# 5. Train / test split & standardization
-# ==============================
+# Train / test split & standardization
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.3, stratify=y, random_state=42
 )
@@ -88,9 +74,7 @@ X_train_seq = X_train.reshape(-1, seq_len, feat_dim)
 X_test_seq  = X_test.reshape(-1, seq_len, feat_dim)
 num_classes = len(le.classes_)
 
-# ==============================
-# 6. Define IoT-FKGD teacher & student architectures
-# ==============================
+# Define IoT-FKGD teacher & student architectures
 class LSHSelfAttention(layers.Layer):
     def __init__(self, num_hashes, key_dim, **kwargs):
         super().__init__(**kwargs)
@@ -166,9 +150,7 @@ def build_student_iotfkgd():
 teacher = build_teacher_iotfkgd()
 student = build_student_iotfkgd()
 
-# ==============================
-# 7. Train Teacher
-# ==============================
+# Train Teacher
 mem_t0 = proc.memory_info().rss/1024**2
 t0 = time.time()
 teacher.fit(X_train_seq, y_train, validation_split=0.1, epochs=1, batch_size=256, verbose=1)
@@ -176,9 +158,7 @@ print(f"Teacher train time: {time.time()-t0:.2f}s, RAM Δ: {proc.memory_info().r
 te_loss, te_acc = teacher.evaluate(X_test_seq, y_test, verbose=0)
 print(f"Teacher eval loss: {te_loss:.4f}, acc: {te_acc:.4f}")
 
-# ==============================
-# 8. Generate soft labels & build data pipeline
-# ==============================
+# Generate soft labels & build data pipeline
 T = 10.0
 train_logits = teacher.predict(X_train_seq, batch_size=512)
 soft_train   = tf.nn.softmax(train_logits/T, axis=1)
@@ -192,9 +172,7 @@ val_ds = tf.data.Dataset.from_tensor_slices((X_test_seq, y_test, soft_test)) \
     .map(lambda x, y, s: (x, (y, s))) \
     .batch(256).prefetch(tf.data.AUTOTUNE)
 
-# ==============================
-# 9. Define Distiller
-# ==============================
+# Define Distiller
 class Distiller(models.Model):
     def __init__(self, student, teacher):
         super().__init__()
@@ -240,9 +218,7 @@ class Distiller(models.Model):
         return {"student_loss": self.sl_tracker.result(),
                 "accuracy": self.acc_tracker.result()}
 
-# ==============================
-# 10. Distillation training
-# ==============================
+# Distillation training
 distiller = Distiller(student, teacher)
 distiller.compile(
     optimizer=optimizers.Adam(),
@@ -256,9 +232,7 @@ t1 = time.time()
 distiller.fit(train_ds, validation_data=val_ds, epochs=1, verbose=1)
 print(f"Distill train time: {time.time()-t1:.2f}s, RAM Δ: {proc.memory_info().rss/1024**2 - mem_s0:.2f} MB")
 
-# ==============================
-# 11. Final evaluation & inference profiling
-# ==============================
+# Final evaluation & inference profiling
 mem_inf0 = proc.memory_info().rss/1024**2
 start_inf = time.time()
 y_prob = student.predict(X_test_seq, batch_size=256, verbose=0)
