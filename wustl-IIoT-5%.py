@@ -13,9 +13,6 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import classification_report, precision_recall_fscore_support
 
-# ==============================
-# 0. List available devices
-# ==============================
 gpus = tf.config.list_physical_devices('GPU')
 cpus = tf.config.list_physical_devices('CPU')
 print("Available CPU devices:", cpus)
@@ -24,9 +21,7 @@ print("Available GPU devices:", gpus)
 # Process object for RAM and CPU stats
 proc = psutil.Process(os.getpid())
 
-# ==============================
-# 1. Load & preprocess train/test sets separately
-# ==============================
+# Load & preprocess train/test sets separately
 train_df = pd.read_csv(
     r'C:\Users\Administrator\Desktop\wustl_iiot_1_5pct_train.csv',
     dtype=str, na_values=['?','-'], keep_default_na=True, low_memory=False
@@ -76,9 +71,7 @@ X_train    = X_train.reshape(-1, seq_len, feat_dim)
 X_test     = X_test.reshape(-1, seq_len, feat_dim)
 num_classes = len(le.classes_)
 
-# ==============================
-# 2. Build Teacher model: CNN + TCN + Attention
-# ==============================
+# 2. Build Teacher model 
 def build_teacher():
     inp = layers.Input(shape=(seq_len, feat_dim))
     x = layers.Conv1D(64, 3, padding='same', activation='relu')(inp)
@@ -105,9 +98,7 @@ def build_teacher():
 
 teacher = build_teacher()
 
-# ==============================
-# 3. Train Teacher
-# ==============================
+# Train Teacher
 t0 = time.time()
 teacher.fit(X_train, y_train_enc, validation_split=0.1,
             epochs=1, batch_size=256, verbose=1)
@@ -115,26 +106,20 @@ print(f"Teacher training time: {time.time() - t0:.2f}s")
 te_loss, te_acc = teacher.evaluate(X_test, y_test_enc, verbose=0)
 print(f"Teacher eval   loss: {te_loss:.4f}, acc: {te_acc:.4f}")
 
-# ==============================
-# 4. Precompute soft labels
-# ==============================
+# Soft labels
 T            = 10.0
 train_logits = teacher.predict(X_train, batch_size=512)
 soft_train   = tf.nn.softmax(train_logits / T)
 test_logits  = teacher.predict(X_test, batch_size=512)
 soft_test    = tf.nn.softmax(test_logits / T)
 
-# ==============================
-# 5. Build dataset pipeline
-# ==============================
+# Build dataset pipeline 
 train_ds = tf.data.Dataset.from_tensor_slices((X_train, y_train_enc, soft_train)) \
                .cache().shuffle(10000).batch(256).prefetch(tf.data.AUTOTUNE)
 val_ds   = tf.data.Dataset.from_tensor_slices((X_test,   y_test_enc,  soft_test)) \
                .batch(256).prefetch(tf.data.AUTOTUNE)
 
-# ==============================
-# 6. Build Student model: pure GRU
-# ==============================
+# 6. Build Student model 
 def build_student():
     inp = layers.Input(shape=(seq_len, feat_dim))
     x   = layers.GRU(64, implementation=2)(inp)
@@ -150,9 +135,7 @@ def build_student():
 
 student = build_student()
 
-# ==============================
-# 7. Standalone Student training & stats
-# ==============================
+# Student training & stats
 print("\n=== Standalone Student Training ===")
 wall_before = time.time()
 cpu_before  = proc.cpu_times().user + proc.cpu_times().system
@@ -168,9 +151,7 @@ print(f"RAM Δ  (train):    {(proc.memory_info().rss - ram_before)/1024**2:.2f} 
 st_loss, st_acc = student.evaluate(X_test, y_test_enc, verbose=0)
 print(f"Standalone student eval loss: {st_loss:.4f}, acc: {st_acc:.4f}")
 
-# ==============================
-# 8. Define Distiller
-# ==============================
+# Distiller
 class Distiller(models.Model):
     def __init__(self, student, temp=10.0, alpha=0.5):
         super().__init__()
@@ -208,9 +189,7 @@ class Distiller(models.Model):
         self.compiled_metrics.update_state(y, preds)
         return {m.name: m.result() for m in self.metrics}
 
-# ==============================
-# 9. Train Distiller
-# ==============================
+# Train Distiller 
 with tf.device('/GPU:0' if gpus else '/CPU:0'):
     distiller = Distiller(student, temp=T, alpha=0.5)
     distiller.compile(
@@ -222,9 +201,7 @@ with tf.device('/GPU:0' if gpus else '/CPU:0'):
     distiller.fit(train_ds, validation_data=val_ds, epochs=1, verbose=1)
     print(f"Distillation training time: {time.time() - d0:.2f}s")
 
-# ==============================
-# 10. Post-distillation evaluation & stats
-# ==============================
+# Post-distillation evaluation & stats
 print("\n=== Post-Distillation Student Evaluation ===")
 wall_before = time.time()
 cpu_before  = proc.cpu_times().user + proc.cpu_times().system
@@ -237,9 +214,7 @@ print(f"Post-distill eval CPU time:  {proc.cpu_times().user + proc.cpu_times().s
 print(f"Post-distill eval RAM Δ:     {(proc.memory_info().rss - ram_before)/1024**2:.2f} MB")
 print(f"Post-distillation student loss: {st_loss_kd:.4f}, acc: {st_acc_kd:.4f}")
 
-# ==============================
-# 11. Formatted classification report
-# ==============================
+# Classification report
 y_pred = student.predict(X_test, batch_size=512)
 report_dict = classification_report(
     y_test_enc, np.argmax(y_pred, axis=1),
@@ -252,9 +227,7 @@ df_report['support'] = df_report['support'].astype(int)
 print("\nFormatted Classification Report (percentages):")
 print(df_report)
 
-# ==============================
-# 12. Inference Time and Memory Usage
-# ==============================
+# Inference Time and Memory Usage
 mem_inf0 = proc.memory_info().rss / (1024**2)
 start_inf = time.time()
 y_prob_inf = student.predict(X_test, batch_size=256, verbose=0)
