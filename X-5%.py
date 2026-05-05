@@ -10,9 +10,6 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler, LabelEncoder
 from sklearn.model_selection import train_test_split
 from tensorflow.keras import layers, models, metrics
 
-# ==============================
-# CONFIGURATION
-# ==============================
 # paths to your train/test CSVs
 train_csv = r'C:\Users\Administrator\Desktop\X-IIoTID_10pct_train.csv'
 test_csv  = r'C:\Users\Administrator\Desktop\X-IIoTID_10pct_test.csv'
@@ -23,9 +20,7 @@ def get_mem_mb():
     return proc.memory_info().rss / 1024**2
 random_state = 42
 
-# ==============================
-# 1. LOAD DATA
-# ==============================
+# LOAD DATA
 df_train = pd.read_csv(
     train_csv,
     dtype=str, na_values=['?','-'], keep_default_na=True, low_memory=False
@@ -35,9 +30,6 @@ df_test = pd.read_csv(
     dtype=str, na_values=['?','-'], keep_default_na=True, low_memory=False
 )
 
-# ==============================
-# 2. CLEANING IN BOTH TRAIN & TEST
-# ==============================
 # replace infinities
 for df in (df_train, df_test):
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
@@ -64,9 +56,6 @@ for df in (df_train, df_test):
     df.drop(columns=[c for c in drop_cols if c in df.columns],
             errors='ignore', inplace=True)
 
-# ==============================
-# 3. FEATURE / LABEL SETUP
-# ==============================
 label_col = 'class2'
 # only keep cat cols that exist in both
 desired_cat = ['Protocol','Service','Conn_state']
@@ -76,9 +65,6 @@ feature_cols = [c for c in df_train.columns if c not in [label_col] + cat_cols]
 # drop any numeric feature with no non-NaN in TRAIN
 feature_cols = [c for c in feature_cols if df_train[c].notna().any()]
 
-# ==============================
-# 4. NUMERIC IMPUTATION
-# ==============================
 for c in feature_cols:
     df_train[c] = pd.to_numeric(df_train[c], errors='coerce')
     df_test [c] = pd.to_numeric(df_test [c], errors='coerce')
@@ -86,9 +72,6 @@ num_imputer = SimpleImputer(strategy='median')
 X_train_num = num_imputer.fit_transform(df_train[feature_cols])
 X_test_num  = num_imputer.transform   (df_test [feature_cols])
 
-# ==============================
-# 5. CATEGORICAL ENCODING
-# ==============================
 if cat_cols:
     df_train[cat_cols] = df_train[cat_cols].fillna('missing')
     df_test [cat_cols] = df_test [cat_cols].fillna('missing')
@@ -99,9 +82,6 @@ else:
     X_train_cat = np.empty((len(df_train), 0))
     X_test_cat  = np.empty((len(df_test),  0))
 
-# ==============================
-# 6. FINAL FEATURE MATRICES & LABELS
-# ==============================
 X_train = np.hstack([X_train_num, X_train_cat])
 X_test  = np.hstack([X_test_num , X_test_cat ])
 
@@ -110,9 +90,6 @@ y_train = le.fit_transform(df_train[label_col].fillna('missing'))
 y_test  = le.transform   (df_test [label_col].fillna('missing'))
 print("class2 mapping:", dict(zip(le.classes_, le.transform(le.classes_))))
 
-# ==============================
-# 7. STANDARDIZATION
-# ==============================
 scaler   = StandardScaler()
 X_train  = scaler.fit_transform(X_train)
 X_test   = scaler.transform   (X_test)
@@ -124,9 +101,7 @@ X_train_seq = X_train.reshape(-1, seq_len, feat_dim)
 X_test_seq  = X_test.reshape(-1, seq_len, feat_dim)
 num_classes = len(le.classes_)
 
-# ==============================
-# 8. BUILD TEACHER MODEL
-# ==============================
+# BUILD TEACHER MODEL
 def build_teacher():
     inp = layers.Input((seq_len, feat_dim))
     x = layers.Conv1D(64, 3, padding='same', activation='relu')(inp)
@@ -169,9 +144,7 @@ print(f"Teacher inference time (evaluate): {t1_inf - t0_inf:.2f} s")
 print(f"Teacher memory RSS: before inf {mem_before_inf:.1f} MB → after inf {mem_after_inf:.1f} MB")
 print(f"Teacher eval loss={te_loss:.4f}, acc={te_acc:.4f}")
 
-# ==============================
-# 9. GENERATE SOFT LABELS
-# ==============================
+# GENERATE SOFT LABELS
 T            = 10.0
 train_logits = teacher.predict(X_train_seq, batch_size=512)
 soft_train   = tf.nn.softmax(train_logits / T, axis=1)
@@ -187,9 +160,7 @@ val_ds   = tf.data.Dataset.from_tensor_slices(
     (X_test_seq, y_test, soft_test)
 ).map(lambda x,y,s: (x,(y,s))).batch(256).prefetch(tf.data.AUTOTUNE)
 
-# ==============================
-# 10. DEFINE DISTILLER & STUDENT
-# ==============================
+# Define Distiller & Student Model
 class Distiller(models.Model):
     def __init__(self, student, teacher):
         super().__init__()
@@ -281,9 +252,7 @@ p,r,f1,_ = precision_recall_fscore_support(
     y_test, y_pred, average='macro')
 print(f"Macro Precision: {p:.4f}, Recall: {r:.4f}, F1: {f1:.4f}")
 
-# ==============================
-# 11. FINAL EVALUATION
-# ==============================
+# FINAL EVALUATION
 y_prob = student.predict(X_test_seq, verbose=0)
 y_pred = np.argmax(y_prob, axis=1)
 
@@ -294,9 +263,8 @@ p,r,f1,_ = precision_recall_fscore_support(
     y_test, y_pred, average='macro')
 print(f"Macro Precision: {p:.4f}, Recall: {r:.4f}, F1: {f1:.4f}")
 
-# ==============================
 # 12. STUDENT INFERENCE WITH RAM & TIME MEASUREMENT
-# ==============================
+
 mem_inf0 = proc.memory_info().rss / (1024**2)
 
 start_inf = time.time()
