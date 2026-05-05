@@ -118,7 +118,7 @@ train_ds = tf.data.Dataset.from_tensor_slices((X_train, y_train_enc, soft_train)
 val_ds   = tf.data.Dataset.from_tensor_slices((X_test,   y_test_enc,  soft_test)) \
                .batch(256).prefetch(tf.data.AUTOTUNE)
 
-# 6. Build Student model 
+# Build Student model 
 def build_student():
     inp = layers.Input(shape=(seq_len, feat_dim))
     x   = layers.GRU(64, implementation=2)(inp)
