@@ -1,5 +1,4 @@
 import os
-# 关闭 oneDNN 导致的浮点差异提示（可选）
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 import time
