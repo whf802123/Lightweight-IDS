@@ -36,7 +36,6 @@ df = pd.read_csv(
 df.replace([np.inf, -np.inf], np.nan, inplace=True)
 df.drop(columns=[
     'Timestamp','LastTime','SrcIP','DstIP','Target','sIpId','dIpId',
-    # ... (其他不需要的列) ...
 ], errors='ignore', inplace=True)
 
 X = df.drop(columns=['Traffic']).apply(pd.to_numeric, errors='coerce')
@@ -63,9 +62,7 @@ X_train = X_train.reshape(-1, seq_len, feat_dim)
 X_test  = X_test.reshape(-1, seq_len, feat_dim)
 num_classes = len(le.classes_)
 
-# ==============================
-# 2. Teacher Model
-# ==============================
+# Teacher Model
 def build_teacher():
     inp = layers.Input(shape=(seq_len, feat_dim))
     x = layers.Conv1D(64, 3, padding='same', activation='relu')(inp)
@@ -93,18 +90,14 @@ def build_teacher():
 
 teacher = build_teacher()
 
-# ==============================
-# 3. Train Teacher
-# ==============================
+# Train Teacher
 t0 = time.time()
 teacher.fit(X_train, y_train, validation_split=0.1, epochs=1, batch_size=256, verbose=1)
 print(f"Teacher training time: {time.time() - t0:.2f}s")
 te_loss, te_acc = teacher.evaluate(X_test, y_test, verbose=0)
 print(f"Teacher eval loss: {te_loss:.4f}, acc: {te_acc:.4f}")
 
-# ==============================
-# 4. Soft Labels
-# ==============================
+# Soft Labels
 T = 10.0
 train_logits = teacher.predict(X_train, batch_size=512)
 soft_train = tf.nn.softmax(train_logits / T)
@@ -114,17 +107,13 @@ soft_test    = tf.nn.softmax(test_logits / T)
 del teacher
 tf.keras.backend.clear_session()
 
-# ==============================
-# 5. Dataset Pipeline
-# ==============================
+# Dataset Pipeline
 train_ds = tf.data.Dataset.from_tensor_slices((X_train, y_train, soft_train)) \
     .shuffle(10000).batch(256).cache().prefetch(tf.data.AUTOTUNE)
 val_ds = tf.data.Dataset.from_tensor_slices((X_test, y_test, soft_test)) \
     .batch(256).prefetch(tf.data.AUTOTUNE)
 
-# ==============================
-# 6. Student Model
-# ==============================
+# Student Model
 def build_student():
     inp = layers.Input(shape=(seq_len, feat_dim))
     x = layers.GRU(64, implementation=2)(inp)
@@ -141,9 +130,7 @@ def build_student():
 
 student = build_student()
 
-# ==============================
-# 7. Train Student
-# ==============================
+# Train Student Model 
 print("\n=== Standalone Student Training ===")
 wall_before = time.time()
 cpu_before = proc.cpu_times().user + proc.cpu_times().system
@@ -162,9 +149,7 @@ print(f"RAM Δ:     {(ram_after - ram_before)/1024**2:.2f} MB")
 st_loss, st_acc = student.evaluate(X_test, y_test, verbose=0)
 print(f"Standalone eval loss: {st_loss:.4f}, acc: {st_acc:.4f}")
 
-# ==============================
-# 8. Distiller
-# ==============================
+# Distiller
 class Distiller(models.Model):
     def __init__(self, student, temp=10.0, alpha=0.5):
         super().__init__()
@@ -203,9 +188,7 @@ class Distiller(models.Model):
         self.compiled_metrics.update_state(y, preds)
         return {m.name: m.result() for m in self.metrics}
 
-# ==============================
-# 9. Distillation
-# ==============================
+# Distillation
 distiller = Distiller(student, temp=T, alpha=0.5)
 distiller.compile(
     optimizer=optimizers.Adam(),
@@ -216,9 +199,7 @@ d0 = time.time()
 distiller.fit(train_ds, validation_data=val_ds, epochs=1, verbose=1)
 print(f"Distillation training time: {time.time() - d0:.2f}s")
 
-# ==============================
-# 10. Evaluation
-# ==============================
+# Evaluation
 print("\n=== Post-Distillation Evaluation ===")
 wall_before = time.time()
 cpu_before = proc.cpu_times().user + proc.cpu_times().system
@@ -235,9 +216,7 @@ print(f"CPU time:  {cpu_after - cpu_before:.2f}s")
 print(f"RAM Δ:     {(ram_after - ram_before)/1024**2:.2f} MB")
 print(f"Eval loss: {st_loss_kd:.4f}, acc: {st_acc_kd:.4f}")
 
-# ==============================
-# 11. Visualization
-# ==============================
+# Visualization
 y_pred = student.predict(X_test, batch_size=512)
 y_labels = np.argmax(y_pred, axis=1)
 
