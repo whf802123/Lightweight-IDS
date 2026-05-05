@@ -89,7 +89,6 @@ num_classes = len(le.classes_)
 
 
 # Early stopping
-
 es_callback = EarlyStopping(
     monitor='val_loss',
     patience=5,
@@ -99,7 +98,6 @@ es_callback = EarlyStopping(
 )
 
 # Attention map
-
 @tf.function(jit_compile=True)
 def compute_attention_map(x):
     att = tf.reduce_sum(tf.square(x), axis=-1, keepdims=True)
@@ -147,9 +145,7 @@ def build_teacher_with_attention():
     return model, att_model
 
 
-# 9. Student model 
-
-
+# Student model 
 def build_student_with_attention():
     inp = layers.Input((seq_len, feat_dim), name="student_input")
 
@@ -171,8 +167,7 @@ def build_student_with_attention():
     return model, att_model
 
 
-# Distiller with Attention Transfer
-
+# Distiller with Attention Transfer 
 class DistillerAT(models.Model):
     def __init__(self, student, teacher, student_att, teacher_att,
                  alpha=0.1, beta=0.1, temperature=10.0):
@@ -291,7 +286,6 @@ print(f"Teacher RAM Δ: {mem_t1 - mem_t0:.2f} MB")
 teacher_eval_loss, teacher_eval_acc = teacher.evaluate(X_test_seq, y_test, verbose=0)
 print(f"Teacher eval loss: {teacher_eval_loss:.4f}, acc: {teacher_eval_acc:.4f}")
 
-
 T = 10.0
 
 train_logits = teacher.predict(X_train_seq, batch_size=512, verbose=0)
@@ -356,8 +350,7 @@ mem_s1 = proc.memory_info().rss / (1024 ** 2)
 print(f"Distillation training time: {student_time:.2f} s")
 print(f"Distillation RAM Δ: {mem_s1 - mem_s0:.2f} MB")
 
-# Evaluation
-
+# Evaluation 
 mem_inf0 = proc.memory_info().rss / (1024 ** 2)
 
 start_inf = time.time()
@@ -377,7 +370,6 @@ print("\nClassification Report (Student):")
 print(classification_report(y_test, y_pred, target_names=le.classes_, digits=4))
 
 # Confusion Matrix
-
 cm = confusion_matrix(y_test, y_pred)
 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=le.classes_)
 
@@ -387,9 +379,7 @@ plt.xticks(rotation=45, ha="right")
 plt.tight_layout()
 plt.show()
 
-
 # ROC 
-
 y_test_bin = label_binarize(y_test, classes=range(num_classes))
 fpr, tpr, roc_auc = {}, {}, {}
 
